@@ -1,8 +1,7 @@
 """
-✦ TESTIFY BY AARAV — Premium Test Builder Bot
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Telegram bot for creating premium CBT-style HTML tests
-Features: Question parsing, AI prompt studio, test configuration, lifelines, HTML export
+✦ TESTIFY BY AARAV — Premium Test Builder Bot (Render Ready)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Features: Text Paste, TXT File Upload, Complex MCQ Parser, AI Prompt, Settings, Lifelines, Premium HTML Export
 """
 
 import os
@@ -10,7 +9,7 @@ import re
 import json
 import random
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -28,16 +27,16 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 CHANNEL = "@sjvbots"
 
 DEFAULT_SETTINGS = {
-    "test_name": "My Test",
+    "test_name": "Premium Mock Test",
     "instructions": "",
-    "question_limit": 0,  # 0 = all questions
+    "question_limit": 0,
     "duration": 20,
     "marks_per_question": 4,
     "negative_marking": 0,
     "shuffle_questions": False,
     "shuffle_options": False,
     "resume_enabled": False,
-    "language_mode": "auto",  # auto, hindi, english, bilingual
+    "language_mode": "auto",
     "lifelines": {
         "fifty_fifty": 1,
         "smart_hint": 1,
@@ -47,15 +46,13 @@ DEFAULT_SETTINGS = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 # USER STATE MANAGEMENT
 # ═══════════════════════════════════════════════════════════════
 
 user_data: Dict[int, Dict] = {}
 
-
 def get_user(uid: int) -> Dict:
-    """User data get karta hai, agar nahi hai toh create karta hai."""
     if uid not in user_data:
         user_data[uid] = {
             "step": "menu",
@@ -66,110 +63,111 @@ def get_user(uid: int) -> Dict:
         }
     return user_data[uid]
 
-
 def reset_user(uid: int):
-    """User data reset karta hai."""
     if uid in user_data:
         del user_data[uid]
 
 
 # ═══════════════════════════════════════════════════════════════
-# QUESTION PARSER
+# COMPLEX QUESTION PARSER (Supports TXT & New Format)
 # ═══════════════════════════════════════════════════════════════
 
 def parse_questions(text: str) -> List[Dict]:
     """
-    Raw text se questions parse karta hai.
-    Format support:
-    Q1. Question?
-    A) Option 1
-    B) Option 2
-    C) Option 3
-    D) Option 4
-    Ans: B
-    Explanation: ...
+    Parses complex MCQ format:
+    Q1. Statement 1
+    
+    Statement 2
+    
+    👉 Question?
+    (a) Option 1
+    (b) Option 2 ✅
+    (c) Option 3
+    (d) Option 4
+    Ex: Explanation
     """
     questions = []
+    # Split by Q<number>.
+    blocks = re.split(r'(?=Q\s*\d+\.)', text)
     
-    # Split by question markers
-    pattern = r'(?:^|\n)\s*(?:Q?\s*\d+[\.\)\:]|[\d]+[\.\)])\s*'
-    parts = re.split(pattern, text, flags=re.IGNORECASE)
-    parts = [p.strip() for p in parts if p.strip()]
-    
-    for part in parts:
-        q = parse_single_question(part)
-        if q:
-            questions.append(q)
-    
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        
+        # Extract Question Number
+        q_match = re.match(r'Q\s*(\d+)\.', block)
+        if not q_match:
+            continue
+            
+        lines = block.split('\n')
+        statements = []
+        question_text = ""
+        options = {}
+        answer = None
+        explanation = ""
+        
+        in_options = False
+        in_explanation = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            # Handle Q number line
+            if line_stripped.startswith(f"Q{q_match.group(1)}.") or line_stripped.startswith(f"Q {q_match.group(1)}."):
+                rest = re.sub(r'^Q\s*\d+\.\s*', '', line_stripped)
+                if rest:
+                    statements.append(rest)
+                continue
+                
+            # Handle 👉 Question line
+            if line_stripped.startswith(""):
+                question_text = line_stripped.replace("👉", "").strip()
+                in_options = False
+                continue
+                
+            # Handle Options (a), (b), (c), (d)
+            opt_match = re.match(r'^\s*\(([a-d])\)\s*(.+)', line, re.IGNORECASE)
+            if opt_match:
+                key = opt_match.group(1).upper()
+                val = opt_match.group(2).strip()
+                if "✅" in val:
+                    answer = key
+                    val = val.replace("✅", "").strip()
+                options[key] = val
+                in_options = True
+                in_explanation = False
+                continue
+                
+            # Handle Explanation
+            if line_stripped.lower().startswith("ex:"):
+                explanation = line_stripped[3:].strip()
+                in_explanation = True
+                in_options = False
+                continue
+                
+            if in_explanation:
+                explanation += " " + line_stripped
+                continue
+                
+            # Handle Statements
+            if not in_options and not in_explanation:
+                if line_stripped:
+                    statements.append(line_stripped)
+                    
+        if options:
+            full_question = "\n\n".join(statements)
+            if question_text:
+                full_question += f"\n\n👉 {question_text}"
+                
+            questions.append({
+                "question": full_question,
+                "options": options,
+                "answer": answer,
+                "explanation": explanation
+            })
+            
     return questions
-
-
-def parse_single_question(text: str) -> Optional[Dict]:
-    """Ek single question block parse karta hai."""
-    lines = text.strip().split('\n')
-    if not lines:
-        return None
-    
-    question_lines = []
-    options = {}
-    answer = None
-    explanation = None
-    
-    i = 0
-    
-    # Extract question text
-    while i < len(lines):
-        line = lines[i].strip()
-        if re.match(r'^[A-E][\.\)\:]', line, re.IGNORECASE):
-            break
-        question_lines.append(line)
-        i += 1
-    
-    question_text = ' '.join(question_lines).strip()
-    if not question_text:
-        return None
-    
-    # Extract options, answer, explanation
-    while i < len(lines):
-        line = lines[i].strip()
-        
-        # Option
-        match = re.match(r'^([A-E])[\.\)\:]\s*(.+)', line, re.IGNORECASE)
-        if match:
-            key = match.group(1).upper()
-            options[key] = match.group(2).strip()
-            i += 1
-            continue
-        
-        # Answer
-        if line.lower().startswith(('ans:', 'answer:', 'correct:', 'uttar:')):
-            ans_match = re.search(r'([A-E])', line, re.IGNORECASE)
-            if ans_match:
-                answer = ans_match.group(1).upper()
-            i += 1
-            continue
-        
-        # Explanation
-        if line.lower().startswith(('explanation:', 'sol:', 'solution:', 'vyakhya:')):
-            explanation = line.split(':', 1)[1].strip() if ':' in line else ""
-            i += 1
-            # Multi-line explanation
-            while i < len(lines) and lines[i].strip() and not re.match(r'^[A-E][\.\)\:]', lines[i], re.IGNORECASE):
-                explanation += ' ' + lines[i].strip()
-                i += 1
-            break
-        
-        i += 1
-    
-    if not options:
-        return None
-    
-    return {
-        "question": question_text,
-        "options": options,
-        "answer": answer,
-        "explanation": explanation or ""
-    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -177,8 +175,6 @@ def parse_single_question(text: str) -> Optional[Dict]:
 # ═══════════════════════════════════════════════════════════════
 
 def build_ai_prompt(config: Dict) -> str:
-    """AI prompt generate karta hai based on user config."""
-    
     language_map = {
         "hindi": "Hindi",
         "english": "English",
@@ -203,27 +199,35 @@ def build_ai_prompt(config: Dict) -> str:
     topic = config.get("topic", "General")
     extra = config.get("extra", "")
     
-    prompt = f"""Generate {num} high-quality MCQ questions on the following topic.
+    prompt = f"""Generate {num} high-quality complex MCQ questions on the following topic.
 
 📚 SUBJECT: {subject}
 🎯 TOPIC: {topic}
 🌐 LANGUAGE: {lang}
-📊 DIFFICULTY LEVEL: {lvl}
+ DIFFICULTY LEVEL: {lvl}
 
 FORMAT (strictly follow):
-Q1. [Question text]
-A) [Option 1]
-B) [Option 2]
-C) [Option 3]
-D) [Option 4]
-Ans: [Correct option letter]
-Explanation: [Brief explanation in same language]
+Q1. <Statement 1 / Assertion / Column A>
 
-REQUIREMENTS:
-- Each question must have exactly 4 options
-- Only ONE correct answer
-- Include clear explanation for every question
-- Questions should be unique and non-repetitive
+<Statement 2 / Reason / Column B>
+
+<Statement 3 (if any)>
+
+👉 <Question/Call to Action>
+(a) <Option 1>
+(b) <Option 2> ✅
+(c) <Option 3>
+(d) <Option 4>
+Ex: <Brief Explanation in target language>
+
+KEY RULES:
+1. Spacing: You MUST use a double line break between every single statement.
+2. Types: Create a mix of Assertion-Reason, Multiple Statements, Match the Column, and Chronological order.
+3. Symbols: Use 👉 before the main question line and ✅ for the correct answer.
+4. Indentation: Indent options by 4 spaces.
+5. Explanation: Explanation should contain why this option is correct and brief details about every option why it is not correct.
+6. CRITICAL: Don't make option 1 always correct. Vary the pattern.
+
 {f'- Additional: {extra}' if extra else ''}
 
 Please generate all {num} questions now."""
@@ -232,13 +236,10 @@ Please generate all {num} questions now."""
 
 
 # ═══════════════════════════════════════════════════════════════
-# HTML TEST GENERATOR
+# PREMIUM HTML TEST GENERATOR
 # ═══════════════════════════════════════════════════════════════
 
 def generate_html_test(test_name: str, questions: List[Dict], settings: Dict, instructions: str = "") -> str:
-    """Complete HTML test file generate karta hai."""
-    
-    # Apply shuffle if enabled
     if settings.get("shuffle_questions"):
         random.shuffle(questions)
     if settings.get("shuffle_options"):
@@ -247,7 +248,6 @@ def generate_html_test(test_name: str, questions: List[Dict], settings: Dict, in
             random.shuffle(opts)
             q["options"] = dict(opts)
     
-    # Apply question limit
     limit = settings.get("question_limit", 0)
     if limit > 0:
         questions = questions[:limit]
@@ -261,42 +261,55 @@ def generate_html_test(test_name: str, questions: List[Dict], settings: Dict, in
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{test_name} — Testify By Aarav</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-*{{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}}
-body{{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100vh;color:#fff;padding:10px}}
-.container{{max-width:900px;margin:0 auto}}
-.header{{background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:20px;margin-bottom:15px}}
-.brand{{color:#ffd700;font-weight:700;font-size:18px}}
-.timer{{background:#ff4757;padding:8px 16px;border-radius:8px;display:inline-block;font-weight:600;margin-top:8px}}
-.question-box{{background:rgba(255,255,255,0.08);border-radius:16px;padding:20px;margin-bottom:15px}}
-.q-text{{font-size:17px;margin-bottom:15px;line-height:1.5}}
-.option{{background:rgba(255,255,255,0.05);border:2px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px 15px;margin:8px 0;cursor:pointer;transition:all 0.2s}}
-.option:hover{{background:rgba(255,215,0,0.1);border-color:#ffd700}}
-.option.selected{{background:rgba(255,215,0,0.2);border-color:#ffd700}}
-.option.correct{{background:rgba(46,213,115,0.2);border-color:#2ed573}}
-.option.wrong{{background:rgba(255,71,87,0.2);border-color:#ff4757}}
-.palette{{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px;margin:15px 0}}
-.pal-btn{{background:rgba(255,255,255,0.1);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-weight:600}}
-.pal-btn.answered{{background:#2ed573}}
-.pal-btn.current{{background:#ffd700;color:#000}}
-.pal-btn.bookmarked{{outline:2px solid #ff4757}}
-.btn{{background:linear-gradient(135deg,#ffd700,#ff9500);color:#000;border:none;padding:12px 24px;border-radius:10px;font-weight:700;cursor:pointer;margin:5px}}
-.btn.secondary{{background:rgba(255,255,255,0.1);color:#fff}}
-.lifeline{{background:rgba(255,255,255,0.08);border-radius:10px;padding:10px;margin:5px;display:inline-block;cursor:pointer}}
-.result-box{{background:rgba(255,255,255,0.08);border-radius:16px;padding:25px;text-align:center}}
-.score{{font-size:48px;color:#ffd700;font-weight:700}}
-.explanation{{background:rgba(46,213,115,0.1);border-left:3px solid #2ed573;padding:12px;margin-top:10px;border-radius:6px;font-size:14px}}
-@media(max-width:600px){{.q-text{{font-size:15px}}.option{{padding:10px}}}}
+*{{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',system-ui,sans-serif}}
+body{{background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);min-height:100vh;color:#fff;padding:15px;line-height:1.6}}
+.container{{max-width:850px;margin:0 auto}}
+.header{{background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:25px;margin-bottom:20px;box-shadow:0 8px 32px rgba(0,0,0,0.3)}}
+.brand{{color:#ffd700;font-weight:700;font-size:16px;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}}
+.brand span{{color:#fff}}
+.timer{{background:linear-gradient(135deg,#ff4757,#ff6b81);padding:10px 20px;border-radius:12px;display:inline-block;font-weight:700;font-size:18px;margin-top:15px;box-shadow:0 4px 15px rgba(255,71,87,0.4)}}
+.question-box{{background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:25px;margin-bottom:20px;transition:all 0.3s ease}}
+.q-text{{font-size:18px;margin-bottom:20px;line-height:1.7;font-weight:400}}
+.q-text strong{{color:#ffd700}}
+.option{{background:rgba(255,255,255,0.03);border:2px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px 20px;margin:10px 0;cursor:pointer;transition:all 0.25s ease;display:flex;align-items:center;gap:12px}}
+.option:hover{{background:rgba(255,215,0,0.08);border-color:#ffd700;transform:translateY(-2px)}}
+.option.selected{{background:rgba(255,215,0,0.15);border-color:#ffd700;box-shadow:0 4px 20px rgba(255,215,0,0.2)}}
+.option.correct{{background:rgba(46,213,115,0.15);border-color:#2ed573;box-shadow:0 4px 20px rgba(46,213,115,0.2)}}
+.option.wrong{{background:rgba(255,71,87,0.15);border-color:#ff4757;box-shadow:0 4px 20px rgba(255,71,87,0.2)}}
+.option-key{{background:rgba(255,255,255,0.1);width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}}
+.option.selected .option-key{{background:#ffd700;color:#000}}
+.option.correct .option-key{{background:#2ed573;color:#fff}}
+.option.wrong .option-key{{background:#ff4757;color:#fff}}
+.palette{{display:grid;grid-template-columns:repeat(auto-fill,minmax(42px,1fr));gap:8px;margin:20px 0}}
+.pal-btn{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:12px 0;border-radius:10px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.2s}}
+.pal-btn:hover{{background:rgba(255,255,255,0.1)}}
+.pal-btn.answered{{background:#2ed573;border-color:#2ed573;color:#fff}}
+.pal-btn.current{{background:#ffd700;border-color:#ffd700;color:#000}}
+.pal-btn.bookmarked{{outline:2px solid #ff4757;outline-offset:-2px}}
+.btn{{background:linear-gradient(135deg,#ffd700,#ff9500);color:#000;border:none;padding:14px 28px;border-radius:14px;font-weight:700;cursor:pointer;margin:6px;font-size:15px;transition:all 0.2s;box-shadow:0 4px 15px rgba(255,215,0,0.3)}}
+.btn:hover{{transform:translateY(-2px);box-shadow:0 6px 20px rgba(255,215,0,0.4)}}
+.btn.secondary{{background:rgba(255,255,255,0.08);color:#fff;box-shadow:none}}
+.btn.secondary:hover{{background:rgba(255,255,255,0.15)}}
+.lifeline{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:12px 18px;margin:6px;display:inline-flex;align-items:center;gap:8px;cursor:pointer;transition:all 0.2s;font-size:14px}}
+.lifeline:hover{{background:rgba(255,255,255,0.1);transform:translateY(-2px)}}
+.result-box{{background:rgba(255,255,255,0.05);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:24px;padding:35px;text-align:center}}
+.score{{font-size:56px;color:#ffd700;font-weight:800;margin:20px 0;background:linear-gradient(135deg,#ffd700,#ff9500);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
+.explanation{{background:rgba(46,213,115,0.08);border-left:4px solid #2ed573;padding:16px;margin-top:15px;border-radius:10px;font-size:15px;line-height:1.6}}
+@media(max-width:600px){{.q-text{{font-size:16px}}.option{{padding:14px}}.btn{{padding:12px 20px;font-size:14px}}}}
 </style>
 </head>
 <body>
 <div class="container">
 <div class="header">
-<div class="brand">✦ TESTIFY BY AARAV</div>
-<h2 id="testTitle">{test_name}</h2>
+<div class="brand">✦ <span>TESTIFY BY AARAV</span> EXAM STUDIO</div>
+<h2 id="testTitle" style="font-size:24px;font-weight:700;margin:10px 0">{test_name}</h2>
 <div class="timer" id="timer">⏱ 00:00</div>
-<div style="margin-top:8px;font-size:13px;opacity:0.8">
-🎯 {settings.get('marks_per_question',4)} marks/Q | ⏱ {settings.get('duration',20)} min | 📋 <span id="qCount">0</span> Questions
+<div style="margin-top:15px;font-size:14px;opacity:0.8;display:flex;gap:20px;flex-wrap:wrap">
+<span>🎯 {settings.get('marks_per_question',4)} marks/Q</span>
+<span>⏱ {settings.get('duration',20)} min</span>
+<span>📋 <span id="qCount">0</span> Questions</span>
 </div>
 </div>
 
@@ -307,19 +320,19 @@ body{{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100v
 <div id="explanationArea"></div>
 </div>
 
-<div style="margin:15px 0">
-<strong>📋 Question Palette</strong>
+<div style="margin:20px 0">
+<strong style="font-size:16px;display:block;margin-bottom:12px">📋 Question Palette</strong>
 <div class="palette" id="palette"></div>
 </div>
 
-<div style="margin:10px 0">
-<strong>🛟 Lifelines</strong>
+<div style="margin:20px 0">
+<strong style="font-size:16px;display:block;margin-bottom:12px">🛟 Lifelines</strong>
 <div id="lifelines"></div>
 </div>
 
-<div style="text-align:center;margin:20px 0">
-<button class="btn" onclick="prevQ()">← Previous</button>
-<button class="btn" onclick="nextQ()">Next →</button>
+<div style="text-align:center;margin:30px 0;display:flex;justify-content:center;flex-wrap:wrap;gap:10px">
+<button class="btn secondary" onclick="prevQ()">← Previous</button>
+<button class="btn secondary" onclick="nextQ()">Next →</button>
 <button class="btn secondary" onclick="bookmark()">🔖 Bookmark</button>
 <button class="btn" onclick="submitTest()" style="background:linear-gradient(135deg,#2ed573,#1e90ff)">✓ Submit Test</button>
 </div>
@@ -327,7 +340,7 @@ body{{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100v
 
 <div id="resultArea" style="display:none"></div>
 
-<div style="text-align:center;padding:20px;opacity:0.6;font-size:12px">
+<div style="text-align:center;padding:30px;opacity:0.5;font-size:12px;letter-spacing:1px">
 TESTIFY BY AARAV · EXAM STUDIO<br>
 Designed for learners, built for practice.
 </div>
@@ -347,13 +360,13 @@ document.getElementById('qCount').textContent = questions.length;
 
 function renderQuestion() {{
     const q = questions[currentQ];
-    document.getElementById('qText').innerHTML = `<strong>Q${{currentQ+1}}.</strong> ${{q.question}}`;
+    document.getElementById('qText').innerHTML = `<strong>Q${{currentQ+1}}.</strong><br><br>${{q.question.replace(/\\n/g, '<br>')}}`;
     const optArea = document.getElementById('optionsArea');
     optArea.innerHTML = '';
     Object.entries(q.options).forEach(([key, val]) => {{
         const div = document.createElement('div');
         div.className = 'option' + (answers[currentQ] === key ? ' selected' : '');
-        div.innerHTML = `<strong>${{key}})</strong> ${{val}}`;
+        div.innerHTML = `<div class="option-key">${{key}}</div><div>${{val}}</div>`;
         div.onclick = () => selectOption(key);
         optArea.appendChild(div);
     }});
@@ -386,16 +399,16 @@ function renderLifelines() {{
     const area = document.getElementById('lifelines');
     area.innerHTML = '';
     const ll = [
-        ['fifty_fifty', '50:50'],
-        ['smart_hint', '💡 Hint'],
-        ['skip_question', '⏭ Skip'],
-        ['extra_time', '+30s']
+        ['fifty_fifty', '🎯 50:50'],
+        ['smart_hint', '💡 Smart Hint'],
+        ['skip_question', '⏭ Skip Question'],
+        ['extra_time', '⏱ +30s Time']
     ];
     ll.forEach(([key, label]) => {{
         if (lifelines[key] > 0) {{
             const div = document.createElement('div');
             div.className = 'lifeline';
-            div.innerHTML = `${{label}} <small>(${{lifelines[key]}})</small>`;
+            div.innerHTML = `${{label}} <small style="opacity:0.7">(${{lifelines[key]}})</small>`;
             div.onclick = () => useLifeline(key);
             area.appendChild(div);
         }}
@@ -414,7 +427,7 @@ function useLifeline(key) {{
             if (toHide.includes(optKey)) el.style.opacity = '0.3';
         }});
     }} else if (key === 'smart_hint') {{
-        alert('💡 Hint: Soch samajh ke answer karein!');
+        alert(' Hint: Think carefully about the core concept!');
     }} else if (key === 'skip_question') {{
         delete answers[currentQ];
         nextQ();
@@ -456,16 +469,15 @@ function submitTest() {{
     const score = (correct * marks) - (wrong * neg);
 
     let html = `<div class="result-box">
-        <h2>📊 Test Result</h2>
+        <h2 style="font-size:28px;margin-bottom:10px">📊 Test Result</h2>
         <div class="score">${{score}} / ${{questions.length * marks}}</div>
-        <p style="margin:15px 0">✅ Correct: ${{correct}} | ❌ Wrong: ${{wrong}} | ⚪ Unattempted: ${{unattempted}}</p>
+        <p style="margin:20px 0;font-size:18px">✅ Correct: <strong>${{correct}}</strong> | ❌ Wrong: <strong>${{wrong}}</strong> | ⚪ Unattempted: <strong>${{unattempted}}</strong></p>
         <button class="btn" onclick="showReview()">📖 Review Answers</button>
-        <button class="btn secondary" onclick="location.reload()">🔄 Retake</button>
-    </div><div id="reviewArea" style="margin-top:20px"></div>`;
+        <button class="btn secondary" onclick="location.reload()">🔄 Retake Test</button>
+    </div><div id="reviewArea" style="margin-top:25px"></div>`;
     document.getElementById('testArea').style.display = 'none';
     document.getElementById('resultArea').innerHTML = html;
     document.getElementById('resultArea').style.display = 'block';
-    window.reviewData = {{ correct, wrong, unattempted }};
 }}
 
 function showReview() {{
@@ -479,12 +491,12 @@ function showReview() {{
             let cls = 'option';
             if (k === q.answer) cls += ' correct';
             else if (k === userAns) cls += ' wrong';
-            optHtml += `<div class="${{cls}}"><strong>${{k}})</strong> ${{v}}</div>`;
+            optHtml += `<div class="${{cls}}"><div class="option-key">${{k}}</div><div>${{v}}</div></div>`;
         }});
         area.innerHTML += `<div class="question-box">
-            <div class="q-text"><strong>Q${{i+1}}.</strong> ${{q.question}} <span style="float:right">${{isCorrect ? '✅' : (userAns ? '❌' : '⚪')}}</span></div>
+            <div class="q-text"><strong>Q${{i+1}}.</strong><br><br>${{q.question.replace(/\\n/g, '<br>')}} <span style="float:right;font-size:24px">${{isCorrect ? '✅' : (userAns ? '❌' : '⚪')}}</span></div>
             ${{optHtml}}
-            ${{q.explanation ? `<div class="explanation">💡 ${{q.explanation}}</div>` : ''}}
+            ${{q.explanation ? `<div class="explanation">💡 <strong>Explanation:</strong><br>${{q.explanation}}</div>` : ''}}
         </div>`;
     }});
 }}
@@ -498,32 +510,33 @@ startTimer();
     return html
 
 
-# ═══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 # BOT HANDLERS
 # ═══════════════════════════════════════════════════════════════
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command handler."""
     user = get_user(update.effective_user.id)
     user["step"] = "menu"
     
     keyboard = [
         [InlineKeyboardButton("📝 Paste Questions", callback_data="paste_q")],
+        [InlineKeyboardButton("📂 Upload TXT File", callback_data="upload_txt")],
         [InlineKeyboardButton("🤖 AI Prompt Studio", callback_data="ai_prompt")],
-        [InlineKeyboardButton("⚙️ Test Settings", callback_data="settings")],
+        [InlineKeyboardButton("️ Test Settings", callback_data="settings")],
         [InlineKeyboardButton("🛟 Lifelines", callback_data="lifelines")],
         [InlineKeyboardButton("🚀 Generate Test", callback_data="generate")],
-        [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{CHANNEL.replace('@','')}")],
+        [InlineKeyboardButton(" Join Channel", url=f"https://t.me/{CHANNEL.replace('@','')}")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     text = (
         "✦ *TESTIFY BY AARAV* ✦\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 *Premium Test Builder Bot*\n\n"
+        " *Premium Test Builder Bot*\n\n"
         "Apne MCQs se premium CBT-style HTML test banayein — seconds mein!\n\n"
-        "📝 Questions paste karein\n"
-        "🤖 AI se MCQs banwayein\n"
+        "📝 Text paste karein\n"
+        "📂 TXT file upload karein\n"
+        " AI se MCQs banwayein\n"
         "⚙️ Test configure karein\n"
         "🚀 Download HTML test\n\n"
         "⏱ Timer | 🎯 Score | 🔖 Bookmark | 💡 Lifelines\n"
@@ -538,7 +551,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def paste_questions_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Paste questions button handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
@@ -549,23 +561,99 @@ async def paste_questions_handler(update: Update, context: ContextTypes.DEFAULT_
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "Apne formatted questions yahan paste karein.\n\n"
         "*Format:*\n"
-        "`Q1. Question text?`\n"
-        "`A) Option 1`\n"
-        "`B) Option 2`\n"
-        "`C) Option 3`\n"
-        "`D) Option 4`\n"
-        "`Ans: B`\n"
-        "`Explanation: ...`\n\n"
-        "✓ Hindi supported\n"
-        "✓ Column matching\n"
+        "`Q1. Statement 1`\n\n"
+        "`Statement 2`\n\n"
+        "`👉 Question?`\n"
+        "`(a) Option 1`\n"
+        "`(b) Option 2 ✅`\n"
+        "`(c) Option 3`\n"
+        "`(d) Option 4`\n"
+        "`Ex: Explanation`\n\n"
+        "✓ Complex MCQs supported\n"
+        "✓ Assertion-Reason supported\n"
         "✓ Explanation supported\n\n"
         "❌ Cancel karne ke liye /start type karein"
     )
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
+async def upload_txt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = get_user(query.from_user.id)
+    user["step"] = "waiting_file"
+    
+    text = (
+        "📂 *TXT File Upload*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Apni `.txt` file yahan upload karein.\n\n"
+        "✓ File mein questions formatted hone chahiye\n"
+        "✓ Maximum size: 5MB\n"
+        "✓ Format same rahega jaise paste mein\n\n"
+        "❌ Cancel karne ke liye /start type karein"
+    )
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """TXT file handler."""
+    user = get_user(update.effective_user.id)
+    if user["step"] != "waiting_file":
+        await update.message.reply_text(" Pehle menu se 'Upload TXT File' select karein.")
+        return
+    
+    doc = update.message.document
+    if not doc.file_name.endswith('.txt'):
+        await update.message.reply_text("❌ Sirf `.txt` files support hoti hain. Dobara try karein.")
+        return
+    
+    await update.message.reply_text("⏳ File process ho rahi hai...")
+    
+    try:
+        file = await context.bot.get_file(doc.file_id)
+        file_path = f"temp_{update.effective_user.id}.txt"
+        await file.download_to_drive(file_path)
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        os.remove(file_path)
+        
+        questions = parse_questions(content)
+        
+        if not questions:
+            await update.message.reply_text(
+                "❌ *Koi question detect nahi hua!*\n\n"
+                "Format check karein aur dobara upload karein.\n"
+                "/start se main menu par jaayein.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        user["questions"] = questions
+        user["step"] = "menu"
+        
+        keyboard = [
+            [InlineKeyboardButton("⚙️ Test Configure karein", callback_data="settings")],
+            [InlineKeyboardButton("🚀 Test Generate karein", callback_data="generate")],
+            [InlineKeyboardButton(" Main Menu", callback_data="menu")],
+        ]
+        
+        await update.message.reply_text(
+            f"✅ *{len(questions)} questions file se detect ho gaye!*\n\n"
+            f"📊 Questions: {len(questions)}\n"
+            f"⏱ Default Duration: {user['settings']['duration']} min\n"
+            f"🎯 Marks/Q: {user['settings']['marks_per_question']}\n\n"
+            "Aage kya karna chahte hain?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def handle_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Questions text handler."""
     user = get_user(update.effective_user.id)
     if user["step"] != "waiting_questions":
         return
@@ -603,7 +691,6 @@ async def handle_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Settings button handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
@@ -617,7 +704,7 @@ async def settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📛 Test Name: `{s['test_name']}`\n"
         f"⏱ Duration: `{s['duration']} min`\n"
-        f"🎯 Marks/Q: `{s['marks_per_question']}`\n"
+        f" Marks/Q: `{s['marks_per_question']}`\n"
         f"❌ Negative: `{neg_map.get(s['negative_marking'], 'No')}`\n"
         f"🔀 Shuffle Qs: `{'On' if s['shuffle_questions'] else 'Off'}`\n"
         f"🔀 Shuffle Options: `{'On' if s['shuffle_options'] else 'Off'}`\n"
@@ -626,10 +713,10 @@ async def settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     keyboard = [
-        [InlineKeyboardButton("📛 Test Name", callback_data="set_name")],
+        [InlineKeyboardButton(" Test Name", callback_data="set_name")],
         [InlineKeyboardButton("⏱ Duration", callback_data="set_duration")],
         [InlineKeyboardButton("🎯 Marks/Q", callback_data="set_marks")],
-        [InlineKeyboardButton("❌ Negative Marking", callback_data="set_negative")],
+        [InlineKeyboardButton(" Negative Marking", callback_data="set_negative")],
         [InlineKeyboardButton("🔀 Shuffle Questions", callback_data="toggle_shuffle_q")],
         [InlineKeyboardButton("🔀 Shuffle Options", callback_data="toggle_shuffle_o")],
         [InlineKeyboardButton("🌐 Language Mode", callback_data="set_lang")],
@@ -640,7 +727,6 @@ async def settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Settings callback handler."""
     query = update.callback_query
     user = get_user(query.from_user.id)
     data = query.data
@@ -692,7 +778,6 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_settings_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Settings text input handler."""
     user = get_user(update.effective_user.id)
     text = update.message.text.strip()
     
@@ -719,7 +804,6 @@ async def handle_settings_input(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def lifelines_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lifelines button handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
@@ -729,7 +813,7 @@ async def lifelines_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🛟 *Custom Lifelines*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 50:50 Option Remover: `{ll.get('fifty_fifty', 1)}` uses\n"
+        f" 50:50 Option Remover: `{ll.get('fifty_fifty', 1)}` uses\n"
         f"💡 Smart Hint: `{ll.get('smart_hint', 1)}` uses\n"
         f"⏭ Skip Question: `{ll.get('skip_question', 3)}` uses\n"
         f"⏱ Extra Time (+30s): `{ll.get('extra_time', 1)}` uses\n\n"
@@ -740,7 +824,7 @@ async def lifelines_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎯 50:50", callback_data="ll_fifty_fifty")],
         [InlineKeyboardButton("💡 Smart Hint", callback_data="ll_smart_hint")],
         [InlineKeyboardButton("⏭ Skip Question", callback_data="ll_skip_question")],
-        [InlineKeyboardButton("⏱ Extra Time", callback_data="ll_extra_time")],
+        [InlineKeyboardButton(" Extra Time", callback_data="ll_extra_time")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu")],
     ]
     
@@ -748,7 +832,6 @@ async def lifelines_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def lifeline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lifeline callback handler."""
     query = update.callback_query
     user = get_user(query.from_user.id)
     key = query.data.replace("ll_", "")
@@ -757,7 +840,6 @@ async def lifeline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_lifeline_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lifeline text input handler."""
     user = get_user(update.effective_user.id)
     if not user["step"].startswith("set_ll_"):
         return
@@ -772,7 +854,6 @@ async def handle_lifeline_input(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def ai_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """AI prompt button handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
@@ -785,11 +866,10 @@ async def ai_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌐 Bilingual", callback_data="ail_bilingual")],
         [InlineKeyboardButton("🏜 Rajasthani", callback_data="ail_rajasthani")],
     ]
-    await query.edit_message_text("🤖 *AI Prompt Studio*\n\n🌐 Language chunein:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text("🤖 *AI Prompt Studio*\n\n Language chunein:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 
 async def ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """AI callback handler."""
     query = update.callback_query
     user = get_user(query.from_user.id)
     data = query.data
@@ -805,7 +885,6 @@ async def ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_ai_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """AI text input handler."""
     user = get_user(update.effective_user.id)
     text = update.message.text.strip()
     
@@ -843,26 +922,25 @@ async def handle_ai_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✨ *AI Prompt Generated!*\n\n"
             f"```\n{prompt}\n```\n\n"
             f"📋 Is prompt ko apne AI tool (ChatGPT, Gemini, etc.) mein paste karke questions banwayein.\n"
-            f"Phir questions yahan paste karke test generate karein!",
+            f"Phir questions yahan paste karke ya TXT file upload karke test generate karein!",
             parse_mode=ParseMode.MARKDOWN
         )
 
 
 async def generate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate test button handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
     
     if not user["questions"]:
         await query.edit_message_text(
-            "❌ *Pehle questions paste karein!*\n\n"
-            "/start se main menu par jaayein aur 📝 Paste Questions chunein.",
+            "❌ *Pehle questions paste ya upload karein!*\n\n"
+            "/start se main menu par jaayein.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    await query.edit_message_text("⏳ *Test generate ho raha hai...*\n\nPremium HTML file ban rahi hai, please wait.", parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text("⏳ *Premium test generate ho raha hai...*\n\nHigh-quality HTML file ban rahi hai, please wait.", parse_mode=ParseMode.MARKDOWN)
     
     try:
         html = generate_html_test(
@@ -879,10 +957,10 @@ async def generate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_document(
             document=open(filename, "rb"),
             caption=(
-                f"✅ *Test Ready!*\n\n"
-                f"📛 {user['settings']['test_name']}\n"
+                f"✅ *Premium Test Ready!*\n\n"
+                f" {user['settings']['test_name']}\n"
                 f"📋 Questions: {len(user['questions'])}\n"
-                f"⏱ Duration: {user['settings']['duration']} min\n"
+                f" Duration: {user['settings']['duration']} min\n"
                 f"🎯 Marks/Q: {user['settings']['marks_per_question']}\n\n"
                 f"📱 Mobile friendly | Single file | No server required\n\n"
                 f"✦ TESTIFY BY AARAV ✦"
@@ -897,15 +975,15 @@ async def generate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_menu(query):
-    """Menu display karta hai."""
     user = get_user(query.from_user.id)
     q_count = len(user["questions"])
     
     keyboard = [
-        [InlineKeyboardButton(f"📝 Paste Questions ({q_count})", callback_data="paste_q")],
+        [InlineKeyboardButton(f" Paste Questions ({q_count})", callback_data="paste_q")],
+        [InlineKeyboardButton("📂 Upload TXT File", callback_data="upload_txt")],
         [InlineKeyboardButton("🤖 AI Prompt Studio", callback_data="ai_prompt")],
         [InlineKeyboardButton("⚙️ Test Settings", callback_data="settings")],
-        [InlineKeyboardButton("🛟 Lifelines", callback_data="lifelines")],
+        [InlineKeyboardButton(" Lifelines", callback_data="lifelines")],
         [InlineKeyboardButton("🚀 Generate Test", callback_data="generate")],
         [InlineKeyboardButton("📢 Join @sjvbots", url=f"https://t.me/{CHANNEL.replace('@','')}")],
     ]
@@ -924,7 +1002,6 @@ async def show_menu(query):
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menu callback handler."""
     query = update.callback_query
     await query.answer()
     user = get_user(query.from_user.id)
@@ -933,7 +1010,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Help command handler."""
     text = (
         "📖 *Testify By Aarav — Help*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -941,10 +1017,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/help* — Yeh help message\n"
         "*/reset* — Sab kuch reset karein\n\n"
         "*Workflow:*\n"
-        "1️⃣ Questions paste karein (ya AI se banwayein)\n"
+        "1️ Questions paste karein ya TXT file upload karein\n"
         "2️⃣ Test settings configure karein\n"
         "3️⃣ Generate par click karein\n"
-        "4️⃣ HTML file download karein\n\n"
+        "4️⃣ Premium HTML file download karein\n\n"
         "*Features:*\n"
         "✓ Timer + Auto-submit\n"
         "✓ Question palette\n"
@@ -959,14 +1035,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset command handler."""
     uid = update.effective_user.id
     reset_user(uid)
     await update.message.reply_text("✅ Sab reset ho gaya! /start se shuru karein.")
 
 
 async def handle_all_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """All text messages handle karta hai."""
     user = get_user(update.effective_user.id)
     step = user["step"]
     
@@ -984,9 +1058,12 @@ async def handle_all_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ══════════════════════════════════════════════════════════════
+# MAIN APPLICATION (Polling Mode - Render Fixed)
 # ═══════════════════════════════════════════════════════════════
-# MAIN APPLICATION
-# ═══════════════════════════════════════════════════════════════
+
+import signal
+import sys
 
 def main():
     """Main application runner."""
@@ -999,6 +1076,7 @@ def main():
     
     # Callbacks
     app.add_handler(CallbackQueryHandler(paste_questions_handler, pattern="^paste_q$"))
+    app.add_handler(CallbackQueryHandler(upload_txt_handler, pattern="^upload_txt$"))
     app.add_handler(CallbackQueryHandler(settings_handler, pattern="^settings$"))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(set_|toggle_|neg_|lang_)"))
     app.add_handler(CallbackQueryHandler(lifelines_handler, pattern="^lifelines$"))
@@ -1008,12 +1086,27 @@ def main():
     app.add_handler(CallbackQueryHandler(generate_handler, pattern="^generate$"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
     
+    # Document handler (TXT file upload)
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
     # Text handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_text))
     
-    print("🚀 Testify By Aarav Bot is running...")
-    app.run_polling()
+    print("🚀 Testify By Aarav Bot is running in Polling Mode...")
+    
+    # Render ke liye Graceful Shutdown
+    def shutdown_handler(signum, frame):
+        print("️ Render shutting down instance. Stopping bot gracefully...")
+        sys.exit(0)
+        
+    signal.signal(signal.SIGTERM, shutdown_handler)
 
+    # ✅ YEH SABSE ZAROORI LINE HAI (Conflict error fix)
+    app.run_polling(
+        drop_pending_updates=True, 
+        allowed_updates=Update.ALL_TYPES,
+        timeout=60
+    )
 
 if __name__ == "__main__":
     main()
